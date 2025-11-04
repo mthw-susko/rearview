@@ -123,21 +123,6 @@ struct CalendarView: View {
                     ForEach(viewModel.monthsToDisplay, id: \.self) { monthDate in
                         monthView(for: monthDate)
                             .id(monthDate)
-                            .onAppear {
-                                // Proactively load more past months when the user scrolls near the beginning
-                                let pastThresholdIndex = viewModel.monthsToDisplay.index(viewModel.monthsToDisplay.startIndex, offsetBy: 2)
-                                if viewModel.monthsToDisplay.indices.contains(pastThresholdIndex) &&
-                                   monthDate == viewModel.monthsToDisplay[pastThresholdIndex] {
-                                    viewModel.loadMorePastMonths()
-                                }
-
-                                // Proactively load more future months when the user scrolls near the end
-                                let futureThresholdIndex = viewModel.monthsToDisplay.index(viewModel.monthsToDisplay.endIndex, offsetBy: -3)
-                                if viewModel.monthsToDisplay.indices.contains(futureThresholdIndex) &&
-                                   monthDate == viewModel.monthsToDisplay[futureThresholdIndex] {
-                                    viewModel.loadMoreFutureMonths()
-                                }
-                            }
                     }
                 }
                 .padding(.horizontal)
@@ -263,6 +248,24 @@ struct CalendarView: View {
         .animation(.easeInOut(duration: 0.3), value: isCurrentMonth)
     }
 
+    // Helper function to get indicator color based on entry count
+    private func indicatorColor(for entryCount: Int) -> Color {
+        switch entryCount {
+        case 1:
+            return logoTeal.opacity(0.7)
+        case 2:
+            return logoTeal.opacity(0.85)
+        case 3:
+            return logoTeal
+        case 4:
+            // Blend between teal and blue - using predefined blend color
+            return Color(red: 0.50, green: 0.62, blue: 0.75)
+        default:
+            // 5+ entries - use blue
+            return logoBlue.opacity(0.9)
+        }
+    }
+    
     @ViewBuilder
     private func dayCell(for date: Date) -> some View {
         let dayNumber = calendar.component(.day, from: date)
@@ -271,6 +274,11 @@ struct CalendarView: View {
         let hasContent = entry?.hasContent ?? false
         let isToday = calendar.isDateInToday(date)
         let isSelectable = isToday || date < currentDate
+        let hasHistoricalEntries = viewModel.hasEntriesFromPreviousYears(for: date)
+        let month = calendar.component(.month, from: date)
+        let day = calendar.component(.day, from: date)
+        let entryCount = viewModel.entryCountForDayAcrossYears(month: month, day: day)
+        let indicatorColor = self.indicatorColor(for: entryCount)
 
         NavigationLink(value: date) {
             ZStack {
@@ -303,6 +311,35 @@ struct CalendarView: View {
                     .foregroundColor(.white)
                     .frame(width: AppConstants.Dimensions.dayNumberSize, height: AppConstants.Dimensions.dayNumberSize)
                     .background(Circle().fill(Color.clear))
+                
+                // Show indicator for days with historical entries in the top right corner
+                if hasHistoricalEntries {
+                    VStack {
+                        HStack {
+                            Spacer()
+                            // Make the dot stand out more if there's an image thumbnail
+                            if hasEntry && hasContent && entry?.displayImages.first != nil {
+                                // Enhanced styling when image is present - color varies by entry count
+                                ZStack {
+                                    Circle()
+                                        .fill(Color.black.opacity(0.25))
+                                        .frame(width: 10, height: 10)
+                                    Circle()
+                                        .fill(indicatorColor)
+                                        .frame(width: 7, height: 7)
+                                }
+                                .offset(x: -3, y: 3)
+                            } else {
+                                // Standard styling when no image - color varies by entry count
+                                Circle()
+                                    .fill(indicatorColor.opacity(0.8))
+                                    .frame(width: 6, height: 6)
+                                    .offset(x: -3, y: 3)
+                            }
+                        }
+                        Spacer()
+                    }
+                }
             }
             .frame(width: AppConstants.Dimensions.dayCellSize, height: AppConstants.Dimensions.dayCellHeight)
             .clipShape(RoundedRectangle(cornerRadius: 8))

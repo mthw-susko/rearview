@@ -394,12 +394,14 @@ class CalendarViewModel: ObservableObject {
     // --- Start of NEW/MODIFIED FUNCTIONS for Infinite Scroll ---
 
     func loadInitialMonths() {
-        // Load a window of 12 months centered around the current date
+        // Load only the current year's 12 months (January through December)
         let today = Date()
-        guard let sixMonthsAgo = calendar.date(byAdding: .month, value: -6, to: today) else { return }
+        let currentYear = calendar.component(.year, from: today)
+        
+        guard let january = calendar.date(from: DateComponents(year: currentYear, month: 1, day: 1)) else { return }
         
         var months: [Date] = []
-        var currentDate = startOfMonth(for: sixMonthsAgo)
+        var currentDate = startOfMonth(for: january)
         
         for _ in 0..<12 {
             months.append(currentDate)
@@ -521,6 +523,38 @@ class CalendarViewModel: ObservableObject {
             entry.month == targetComponents.month && 
             entry.day == targetComponents.day
         }
+    }
+    
+    /// Checks if there are entries from previous years for a given date (same month/day, different year)
+    func hasEntriesFromPreviousYears(for date: Date) -> Bool {
+        var utcCalendar = Calendar(identifier: .gregorian)
+        utcCalendar.timeZone = TimeZone(identifier: "UTC")!
+        let targetComponents = utcCalendar.dateComponents([.year, .month, .day], from: date)
+        let currentYear = targetComponents.year ?? 0
+        let targetMonth = targetComponents.month ?? 0
+        let targetDay = targetComponents.day ?? 0
+        
+        // Check if there are any entries with the same month/day but different (earlier) year
+        return entries.contains { entry in
+            entry.month == targetMonth &&
+            entry.day == targetDay &&
+            entry.year < currentYear
+        }
+    }
+    
+    /// Gets all entries for a specific month/day combination across all years, sorted by year descending
+    func entriesForDayAcrossYears(month: Int, day: Int) -> [JournalEntry] {
+        let matchingEntries = entries.filter { entry in
+            entry.month == month && entry.day == day
+        }
+        return matchingEntries.sorted { $0.year > $1.year }
+    }
+    
+    /// Gets the count of entries for a specific month/day combination across all years
+    func entryCountForDayAcrossYears(month: Int, day: Int) -> Int {
+        return entries.filter { entry in
+            entry.month == month && entry.day == day
+        }.count
     }
     
     // MARK: - Guest Mode Support

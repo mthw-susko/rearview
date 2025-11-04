@@ -14,9 +14,34 @@ struct DayView: View {
     private let logoBlue = AppConstants.Colors.logoBlue
     private let logoTeal = AppConstants.Colors.logoTeal
     
+    // Year navigation state - initialize to the passed date's year
+    @State private var selectedYear: Int = 0
+    
+    // Get available years for this month/day combination
+    private var availableYears: [Int] {
+        let calendar = Calendar.current
+        let month = calendar.component(.month, from: date)
+        let day = calendar.component(.day, from: date)
+        let allEntries = viewModel.entriesForDayAcrossYears(month: month, day: day)
+        let years = allEntries.map { $0.year }
+        // Always include the current year
+        let currentYear = calendar.component(.year, from: Date())
+        var uniqueYears = Set(years)
+        uniqueYears.insert(currentYear)
+        return Array(uniqueYears).sorted(by: >)
+    }
+    
+    // Computed date for the selected year
+    private var selectedDate: Date {
+        let calendar = Calendar.current
+        let month = calendar.component(.month, from: date)
+        let day = calendar.component(.day, from: date)
+        return calendar.date(from: DateComponents(year: selectedYear, month: month, day: day)) ?? date
+    }
+    
     private var entry: JournalEntry {
-        let foundEntry = viewModel.entryFor(date: date) ?? JournalEntry(id: nil, date: date, audioURL: nil, images: [])
-        print("DayView: entry for date \(date) - images: \(foundEntry.images.count), displayImages: \(foundEntry.displayImages.count), audioURL: \(foundEntry.audioURL ?? "nil")")
+        let foundEntry = viewModel.entryFor(date: selectedDate) ?? JournalEntry(id: nil, date: selectedDate, audioURL: nil, images: [])
+        print("DayView: entry for date \(selectedDate) - images: \(foundEntry.images.count), displayImages: \(foundEntry.displayImages.count), audioURL: \(foundEntry.audioURL ?? "nil")")
         return foundEntry
     }
     
@@ -33,6 +58,7 @@ struct DayView: View {
     @State private var showingSlidingButtons = false
     @State private var showingAudioOptions = false
     @State private var showingAudioMenu = false
+    @State private var showingYearPicker = false
     @StateObject private var cameraService = CameraService.shared
         
     private var isToday: Bool { Calendar.current.isDateInToday(date) }
@@ -57,6 +83,11 @@ struct DayView: View {
         }
         .navigationBarHidden(true)
         .preferredColorScheme(.dark)
+        .onAppear {
+            // Initialize selectedYear to the date's year when view appears
+            let calendar = Calendar.current
+            selectedYear = calendar.component(.year, from: date)
+        }
         .gesture(
             DragGesture()
                 .onEnded { value in
@@ -132,7 +163,7 @@ struct DayView: View {
                                 Button(action: {
                                     HapticManager.shared.play(.warning)
                                     let userID = authManager.userSession?.uid ?? "guest"
-                                    Task { await viewModel.deleteAudio(for: date, userID: userID) }
+                                    Task { await viewModel.deleteAudio(for: selectedDate, userID: userID) }
                                     withAnimation(.spring(response: 0.3, dampingFraction: 0.8)) {
                                         showingAudioMenu = false
                                     }
@@ -372,7 +403,29 @@ struct DayView: View {
     }
 
     private var headerView: some View {
-        HStack {
+        let calendar = Calendar.current
+        let month = calendar.component(.month, from: date)
+        let day = calendar.component(.day, from: date)
+        let currentYearIndex = availableYears.firstIndex(of: selectedYear) ?? 0
+        let canNavigateToPreviousYear = currentYearIndex < availableYears.count - 1
+        let canNavigateToNextYear = currentYearIndex > 0
+        
+        let monthDayFormatter = DateFormatter()
+        monthDayFormatter.dateFormat = "MMMM d"
+        
+        // Number formatter to ensure year displays without commas
+        let yearFormatter: NumberFormatter = {
+            let formatter = NumberFormatter()
+            formatter.numberStyle = .none
+            formatter.usesGroupingSeparator = false
+            return formatter
+        }()
+        
+        func formatYear(_ year: Int) -> String {
+            return yearFormatter.string(from: NSNumber(value: year)) ?? String(year)
+        }
+        
+        return HStack {
             Button(action: {
                 HapticManager.shared.impact(.light)
                 presentationMode.wrappedValue.dismiss()
@@ -380,7 +433,62 @@ struct DayView: View {
                 Image(systemName: "arrow.left")
             }
             Spacer()
-            Text(date, style: .date).fontWeight(.bold)
+            
+            // Date with year picker dropdown
+            Menu {
+                ForEach(availableYears, id: \.self) { year in
+                    Button(action: {
+                        selectedYear = year
+                        HapticManager.shared.impact(.light)
+                    }) {
+                        HStack {
+                            Text(formatYear(year))
+                            if year == selectedYear {
+                                Image(systemName: "checkmark")
+                            }
+                        }
+                    }
+                }
+            } label: {
+                HStack(spacing: 6) {
+                    // Format date manually to avoid number formatting on year
+                    let monthDay = monthDayFormatter.string(from: selectedDate)
+                    let yearString = formatYear(selectedYear)
+                    Text(monthDay + ", " + yearString)
+                        .fontWeight(.bold)
+                    
+                    if availableYears.count > 1 {
+                        Image(systemName: "chevron.down")
+                            .font(.caption2)
+                            .foregroundColor(.gray)
+                    }
+                }
+            }
+            .foregroundColor(.white)
+            .gesture(
+                DragGesture(minimumDistance: 50)
+                    .onEnded { value in
+                        if abs(value.translation.width) > abs(value.translation.height) {
+                            // Horizontal swipe
+                            if value.translation.width > 0 && canNavigateToPreviousYear {
+                                // Swipe right - go to previous year (earlier year)
+                                let nextIndex = currentYearIndex + 1
+                                if nextIndex < availableYears.count {
+                                    selectedYear = availableYears[nextIndex]
+                                    HapticManager.shared.impact(.light)
+                                }
+                            } else if value.translation.width < 0 && canNavigateToNextYear {
+                                // Swipe left - go to next year (later year)
+                                let nextIndex = currentYearIndex - 1
+                                if nextIndex >= 0 {
+                                    selectedYear = availableYears[nextIndex]
+                                    HapticManager.shared.impact(.light)
+                                }
+                            }
+                        }
+                    }
+            )
+            
             Spacer()
             Image(systemName: "arrow.left").opacity(0)
         }
@@ -396,7 +504,7 @@ struct DayView: View {
                     guard entry.displayImages.indices.contains(selectedImageIndex) else { return }
                     let userID = authManager.userSession?.uid ?? "guest"
                     let imageToDelete = entry.displayImages[selectedImageIndex]
-                    await viewModel.deleteImage(from: date, journalImage: imageToDelete, for: userID)
+                    await viewModel.deleteImage(from: selectedDate, journalImage: imageToDelete, for: userID)
                 }
             }) {
                 Image(systemName: "xmark")
