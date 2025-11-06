@@ -273,12 +273,13 @@ struct CalendarView: View {
         let hasEntry = entry != nil
         let hasContent = entry?.hasContent ?? false
         let isToday = calendar.isDateInToday(date)
-        let isSelectable = isToday || date < currentDate
-        let hasHistoricalEntries = viewModel.hasEntriesFromPreviousYears(for: date)
         let month = calendar.component(.month, from: date)
         let day = calendar.component(.day, from: date)
+        let hasHistoricalEntries = viewModel.hasEntriesFromPreviousYears(for: date)
         let entryCount = viewModel.entryCountForDayAcrossYears(month: month, day: day)
         let indicatorColor = self.indicatorColor(for: entryCount)
+        // Allow selection if it's today, past date, or has historical entries (even if future date)
+        let isSelectable = isToday || date < currentDate || hasHistoricalEntries
 
         NavigationLink(value: date) {
             ZStack {
@@ -311,38 +312,18 @@ struct CalendarView: View {
                     .foregroundColor(.white)
                     .frame(width: AppConstants.Dimensions.dayNumberSize, height: AppConstants.Dimensions.dayNumberSize)
                     .background(Circle().fill(Color.clear))
-                
-                // Show indicator for days with historical entries in the top right corner
-                if hasHistoricalEntries {
-                    VStack {
-                        HStack {
-                            Spacer()
-                            // Make the dot stand out more if there's an image thumbnail
-                            if hasEntry && hasContent && entry?.displayImages.first != nil {
-                                // Enhanced styling when image is present - color varies by entry count
-                                ZStack {
-                                    Circle()
-                                        .fill(Color.black.opacity(0.25))
-                                        .frame(width: 10, height: 10)
-                                    Circle()
-                                        .fill(indicatorColor)
-                                        .frame(width: 7, height: 7)
-                                }
-                                .offset(x: -3, y: 3)
-                            } else {
-                                // Standard styling when no image - color varies by entry count
-                                Circle()
-                                    .fill(indicatorColor.opacity(0.8))
-                                    .frame(width: 6, height: 6)
-                                    .offset(x: -3, y: 3)
-                            }
-                        }
-                        Spacer()
-                    }
-                }
             }
             .frame(width: AppConstants.Dimensions.dayCellSize, height: AppConstants.Dimensions.dayCellHeight)
             .clipShape(RoundedRectangle(cornerRadius: 8))
+            .overlay(
+                // Show border indicator for days with historical entries - matches thumbnail area
+                Group {
+                    if hasHistoricalEntries {
+                        RoundedRectangle(cornerRadius: 8)
+                            .stroke(indicatorColor, lineWidth: 2)
+                    }
+                }
+            )
         }
         .simultaneousGesture(TapGesture().onEnded {
             if isSelectable {

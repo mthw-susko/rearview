@@ -24,11 +24,44 @@ struct DayView: View {
         let day = calendar.component(.day, from: date)
         let allEntries = viewModel.entriesForDayAcrossYears(month: month, day: day)
         let years = allEntries.map { $0.year }
-        // Always include the current year
         let currentYear = calendar.component(.year, from: Date())
+        let isFutureDate = calendar.component(.year, from: date) > currentYear || 
+                          (calendar.component(.year, from: date) == currentYear && date > Date())
+        
         var uniqueYears = Set(years)
-        uniqueYears.insert(currentYear)
+        // Only include current year if the date is not in the future (to prevent adding entries to future dates)
+        if !isFutureDate {
+            uniqueYears.insert(currentYear)
+        }
         return Array(uniqueYears).sorted(by: >)
+    }
+    
+    // Check if the original date (from calendar) is in the future
+    private var isOriginalDateInFuture: Bool {
+        return date > Date()
+    }
+    
+    // Check if the selected date is in the future (to prevent adding content)
+    private var isSelectedDateInFuture: Bool {
+        let calendar = Calendar.current
+        let currentYear = calendar.component(.year, from: Date())
+        let selectedYear = self.selectedYear
+        let month = calendar.component(.month, from: date)
+        let day = calendar.component(.day, from: date)
+        
+        if selectedYear > currentYear {
+            return true
+        } else if selectedYear == currentYear {
+            if let selectedDate = calendar.date(from: DateComponents(year: selectedYear, month: month, day: day)) {
+                return selectedDate > Date()
+            }
+        }
+        return false
+    }
+    
+    // Check if we should prevent adding content (either original date or selected date is in future)
+    private var shouldPreventAddingContent: Bool {
+        return isOriginalDateInFuture || isSelectedDateInFuture
     }
     
     // Computed date for the selected year
@@ -84,9 +117,23 @@ struct DayView: View {
         .navigationBarHidden(true)
         .preferredColorScheme(.dark)
         .onAppear {
-            // Initialize selectedYear to the date's year when view appears
+            // Initialize selectedYear - if date is in future and has historical entries, show most recent past year
             let calendar = Calendar.current
-            selectedYear = calendar.component(.year, from: date)
+            let dateYear = calendar.component(.year, from: date)
+            let currentYear = calendar.component(.year, from: Date())
+            let isFutureDate = dateYear > currentYear || (dateYear == currentYear && date > Date())
+            
+            if isFutureDate && !availableYears.isEmpty {
+                // If it's a future date, default to the most recent past year (first in sorted list)
+                // availableYears is sorted descending, so first item is most recent
+                if let mostRecentPastYear = availableYears.first(where: { $0 < currentYear }) {
+                    selectedYear = mostRecentPastYear
+                } else {
+                    selectedYear = dateYear
+                }
+            } else {
+                selectedYear = dateYear
+            }
         }
         .gesture(
             DragGesture()
@@ -138,6 +185,13 @@ struct DayView: View {
                             
                             VStack(spacing: 0) {
                                 Button(action: {
+                                    if shouldPreventAddingContent {
+                                        // Don't allow appending to future dates
+                                        withAnimation(.spring(response: 0.3, dampingFraction: 0.8)) {
+                                            showingAudioMenu = false
+                                        }
+                                        return
+                                    }
                                     if let audioURLString = entry.audioURL, let url = URL(string: audioURLString) {
                                         if permissionManager.validateMicrophonePermission() {
                                             HapticManager.shared.impact(.heavy)
@@ -153,10 +207,11 @@ struct DayView: View {
                                         Text("Append Recording")
                                         Spacer()
                                     }
-                                    .foregroundColor(.white)
+                                    .foregroundColor(shouldPreventAddingContent ? .gray : .white)
                                     .padding(.horizontal, 16)
                                     .padding(.vertical, 12)
                                 }
+                                .disabled(shouldPreventAddingContent)
                                 
                                 Divider().background(Color.gray.opacity(0.3))
                                 
@@ -259,7 +314,25 @@ struct DayView: View {
     @ViewBuilder
     private var emptyStateView: some View {
         VStack {
-            if permissionManager.hasPhotoLibraryAccess || permissionManager.hasCameraAccess {
+            if isSelectedDateInFuture {
+                // Show message for future dates - can't add content
+                VStack(spacing: 15) {
+                    Image(systemName: "calendar.badge.clock")
+                        .font(.system(size: 50))
+                        .foregroundColor(.gray)
+                    
+                    Text("View Only")
+                        .font(.headline)
+                        .foregroundColor(.white)
+                    
+                    Text("You can view past entries for this date, but cannot add new content to future dates")
+                        .font(.subheadline)
+                        .foregroundColor(.gray)
+                        .multilineTextAlignment(.center)
+                        .padding(.horizontal)
+                }
+                .frame(maxWidth: .infinity, maxHeight: .infinity)
+            } else if permissionManager.hasPhotoLibraryAccess || permissionManager.hasCameraAccess {
                 // Show both camera and photo library options stacked vertically
                 VStack(spacing: 20) {
                     Spacer()
@@ -346,6 +419,11 @@ struct DayView: View {
     @MainActor
     private func processSelectedPhotos(_ items: [PhotosPickerItem]) async {
         guard !items.isEmpty else { return }
+        guard !shouldPreventAddingContent else {
+            print("DayView: Cannot add images to future dates")
+            selectedPhotoItems = []
+            return
+        }
         print("DayView: Processing \(items.count) selected photos...")
         isUploadingImages = true
         
@@ -380,6 +458,11 @@ struct DayView: View {
     
     @MainActor
     private func processCapturedImage(_ image: UIImage) async {
+        guard !shouldPreventAddingContent else {
+            print("DayView: Cannot add images to future dates")
+            cameraService.resetCapturedImage()
+            return
+        }
         print("DayView: Processing captured image...")
         isUploadingImages = true
         
@@ -539,7 +622,7 @@ struct DayView: View {
             // Sliding buttons container - positioned to avoid right padding issues
             VStack(spacing: 12) {
                 // Camera and Photo buttons that slide down
-                if showingSlidingButtons {
+                if showingSlidingButtons && !isSelectedDateInFuture {
                     // Camera button
                     Button(action: {
                         if permissionManager.validateCameraPermission() {
@@ -579,25 +662,27 @@ struct DayView: View {
                     ))
                 }
                 
-                // Plus button
-                Button(action: {
-                    HapticManager.shared.impact(.medium)
-                    withAnimation(.spring(response: 0.3, dampingFraction: 0.8)) {
-                        showingSlidingButtons.toggle()
-                    }
-                }) {
-                    ZStack {
-                        if isUploadingImages {
-                            ProgressView().tint(.black)
-                        } else {
-                            Image(systemName: showingSlidingButtons ? "xmark" : "plus")
-                                .fontWeight(.bold)
+                // Plus button - only show if not viewing a future date
+                if !isSelectedDateInFuture {
+                    Button(action: {
+                        HapticManager.shared.impact(.medium)
+                        withAnimation(.spring(response: 0.3, dampingFraction: 0.8)) {
+                            showingSlidingButtons.toggle()
+                        }
+                    }) {
+                        ZStack {
+                            if isUploadingImages {
+                                ProgressView().tint(.black)
+                            } else {
+                                Image(systemName: showingSlidingButtons ? "xmark" : "plus")
+                                    .fontWeight(.bold)
+                            }
                         }
                     }
-            }
-            .font(.title2)
-            .buttonStyle(CircleButtonStyle())
-            .disabled(isUploadingImages)
+                    .font(.title2)
+                    .buttonStyle(CircleButtonStyle())
+                    .disabled(isUploadingImages)
+                }
             }
             .frame(width: 50) // Fixed width to prevent horizontal movement
             .frame(maxWidth: .infinity, alignment: .trailing) // Align to right edge
@@ -618,6 +703,11 @@ struct DayView: View {
                         audioPlayer.pausePlayback() 
                     } else if audioRecorder.isRecording {
                         // Stop recording (either new or appending)
+                        if shouldPreventAddingContent {
+                            // Don't allow saving audio to future dates
+                            audioRecorder.stopRecording()
+                            return
+                        }
                         if let url = audioRecorder.stopRecording() {
                             let userID = authManager.userSession?.uid ?? "guest"
                             isUploadingAudio = true
@@ -656,6 +746,10 @@ struct DayView: View {
                 .frame(width: 44) // Fixed width for button
             } else {
                 Button(action: {
+                    if shouldPreventAddingContent {
+                        // Don't allow recording for future dates
+                        return
+                    }
                     if audioRecorder.isRecording {
                         HapticManager.shared.impact(.medium)
                         if let url = audioRecorder.stopRecording() {
@@ -683,9 +777,10 @@ struct DayView: View {
                     }
                 }) {
                     Image(systemName: audioRecorder.isRecording ? "stop.fill" : (audioRecorder.isAppending ? "plus.mic.fill" : "mic.fill"))
-                        .font(.title).foregroundColor(audioRecorder.isRecording ? .red : .white)
+                        .font(.title).foregroundColor(audioRecorder.isRecording ? .red : (shouldPreventAddingContent ? .gray : .white))
                 }
                 .frame(width: 44) // Fixed width for button
+                .disabled(shouldPreventAddingContent)
                 
                 ModernSoundWaveView(amplitude: CGFloat(audioRecorder.audioPower))
                     .frame(height: 50)

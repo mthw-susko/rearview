@@ -50,6 +50,14 @@ struct WelcomeView: View {
             isLogo: false
         ),
         OnboardingPage(
+            title: "Multi-Year Journal",
+            subtitle: "Reflect on the past",
+            description: "Days with entries from previous years show a colored border on the calendar. Tap any day to view entries from past years—use the year dropdown in the day view to navigate between years. The border color indicates how many entries exist for that date across all years.",
+            imageName: "calendar.badge.clock",
+            color: AppConstants.Colors.logoBlue,
+            isLogo: false
+        ),
+        OnboardingPage(
             title: "Ready to Start?",
             subtitle: "Create your account",
             description: "Sign up to begin documenting your daily memories and building your personal journal.",
